@@ -76,7 +76,8 @@ func createDeployment(metaAndSpec *PodMetaAndSpec) *appV1.Deployment {
 			},
 			Template: coreV1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: originLabels,
+					Labels:      originLabels,
+					Annotations: metaAndSpec.Meta.Annotations,
 				},
 				Spec: createPod(metaAndSpec).Spec,
 			},
@@ -144,8 +145,8 @@ func createContainer(image string, args []string, envs map[string]string, ports 
 	for _, port := range ports {
 		container.Ports = append(container.Ports, coreV1.ContainerPort{
 			// TODO: assume port using http protocol, should be replace with user-defined protocol, for istio constraint
-			Name: fmt.Sprintf("http-%d", port),
-			Protocol: coreV1.ProtocolTCP,
+			Name:          fmt.Sprintf("http-%d", port),
+			Protocol:      coreV1.ProtocolTCP,
 			ContainerPort: int32(port),
 		})
 	}
