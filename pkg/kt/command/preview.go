@@ -13,7 +13,7 @@ import (
 // NewPreviewCommand return new preview command
 func NewPreviewCommand(action ActionInterface) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:  "preview",
+		Use:   "preview",
 		Short: "Expose a local service to kubernetes cluster",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			return general.Prepare()
@@ -44,9 +44,10 @@ func (action *Action) Preview(serviceName string) error {
 		return err
 	}
 
-	if port := util.FindBrokenLocalPort(opt.Get().PreviewOptions.Expose); port != "" {
-		return fmt.Errorf("no application is running on port %s", port)
-	}
+	// 不检查本地端口
+	//if port := util.FindBrokenLocalPort(opt.Get().PreviewOptions.Expose); port != "" {
+	//	return fmt.Errorf("no application is running on port %s", port)
+	//}
 
 	if err = preview.Expose(serviceName); err != nil {
 		return err

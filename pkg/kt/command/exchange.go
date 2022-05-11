@@ -14,7 +14,7 @@ import (
 // NewExchangeCommand return new exchange command
 func NewExchangeCommand(action ActionInterface) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:  "exchange",
+		Use:   "exchange",
 		Short: "Redirect all requests of specified kubernetes service to local",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			return general.Prepare()
@@ -46,9 +46,10 @@ func (action *Action) Exchange(resourceName string) error {
 		return err
 	}
 
-	if port := util.FindBrokenLocalPort(opt.Get().ExchangeOptions.Expose); port != "" {
-		return fmt.Errorf("no application is running on port %s", port)
-	}
+	// 不检查本地端口
+	//if port := util.FindBrokenLocalPort(opt.Get().ExchangeOptions.Expose); port != "" {
+	//	return fmt.Errorf("no application is running on port %s", port)
+	//}
 
 	if opt.Get().ExchangeOptions.Mode == util.ExchangeModeScale {
 		err = exchange.ByScale(resourceName)

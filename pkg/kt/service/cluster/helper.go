@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"fmt"
+
 	opt "github.com/alibaba/kt-connect/pkg/kt/command/options"
 	"github.com/alibaba/kt-connect/pkg/kt/util"
 	appV1 "k8s.io/api/apps/v1"
@@ -76,7 +77,8 @@ func createDeployment(metaAndSpec *PodMetaAndSpec) *appV1.Deployment {
 			},
 			Template: coreV1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: originLabels,
+					Labels:      originLabels,
+					Annotations: metaAndSpec.Meta.Annotations,
 				},
 				Spec: createPod(metaAndSpec).Spec,
 			},
@@ -141,7 +143,7 @@ func createContainer(image string, args []string, envs map[string]string, ports 
 		},
 		Ports: []coreV1.ContainerPort{},
 		Resources: coreV1.ResourceRequirements{
-			Limits: coreV1.ResourceList{},
+			Limits:   coreV1.ResourceList{},
 			Requests: coreV1.ResourceList{},
 		},
 	}
@@ -150,8 +152,8 @@ func createContainer(image string, args []string, envs map[string]string, ports 
 	}
 	for name, port := range ports {
 		container.Ports = append(container.Ports, coreV1.ContainerPort{
-			Name: name,
-			Protocol: coreV1.ProtocolTCP,
+			Name:          name,
+			Protocol:      coreV1.ProtocolTCP,
 			ContainerPort: int32(port),
 		})
 	}
