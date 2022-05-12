@@ -13,7 +13,7 @@ import (
 // NewMeshCommand return new mesh command
 func NewMeshCommand(action ActionInterface) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:  "mesh",
+		Use:   "mesh",
 		Short: "Redirect marked requests of specified kubernetes service to local",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			return general.Prepare()
@@ -46,8 +46,10 @@ func (action *Action) Mesh(resourceName string) error {
 		return err
 	}
 
-	if port := util.FindBrokenLocalPort(opt.Get().MeshOptions.Expose); port != "" {
-		return fmt.Errorf("no application is running on port %s", port)
+	if opt.Get().ListenCheck {
+		if port := util.FindBrokenLocalPort(opt.Get().MeshOptions.Expose); port != "" {
+			return fmt.Errorf("no application is running on port %s", port)
+		}
 	}
 
 	// Get service to mesh
@@ -77,4 +79,3 @@ func (action *Action) Mesh(resourceName string) error {
 	log.Info().Msgf("Terminal Signal is %s", s)
 	return nil
 }
-

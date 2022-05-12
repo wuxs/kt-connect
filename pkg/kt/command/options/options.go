@@ -104,6 +104,7 @@ type DaemonOptions struct {
 	SkipTimeDiff        bool
 	KubeContext         string
 	PodQuota            string
+	ListenCheck         bool
 }
 
 var opt *DaemonOptions
@@ -112,7 +113,7 @@ var opt *DaemonOptions
 func Get() *DaemonOptions {
 	if opt == nil {
 		opt = &DaemonOptions{
-			Namespace:  util.DefaultNamespace,
+			Namespace: util.DefaultNamespace,
 			RuntimeStore: &RuntimeOptions{
 				UserHome: util.UserHome,
 				AppHome:  util.KtHome,

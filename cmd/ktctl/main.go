@@ -30,9 +30,9 @@ func main() {
 	opt.Get().RuntimeStore.Version = version
 
 	var rootCmd = &cobra.Command{
-		Use:   "ktctl",
+		Use:     "ktctl",
 		Version: version,
-		Long: "A utility tool to help you work with Kubernetes dev environment more efficiently",
+		Long:    "A utility tool to help you work with Kubernetes dev environment more efficiently",
 	}
 
 	rootCmd.Run = func(cmd *cobra.Command, args []string) {
@@ -67,6 +67,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVarP(&opt.Get().AlwaysUpdateShadow, "forceUpdate", "f", false, "Always update shadow image")
 	rootCmd.PersistentFlags().StringVar(&opt.Get().KubeContext, "context", "", "Specify current context of kubeconfig")
 	rootCmd.PersistentFlags().StringVar(&opt.Get().PodQuota, "podQuota", "", "Specify resource limit for shadow and router pod, e.g. '0.5c,512m'")
+	rootCmd.PersistentFlags().BoolVar(&opt.Get().ListenCheck, "listenCheck", false, "Check the expose port is listening.")
 
 	rootCmd.PersistentFlags().BoolVar(&opt.Get().RunAsWorkerProcess, "asWorker", false, "Run as worker process")
 	_ = rootCmd.PersistentFlags().MarkHidden("asWorker")

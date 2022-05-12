@@ -44,10 +44,11 @@ func (action *Action) Preview(serviceName string) error {
 		return err
 	}
 
-	// 不检查本地端口
-	//if port := util.FindBrokenLocalPort(opt.Get().PreviewOptions.Expose); port != "" {
-	//	return fmt.Errorf("no application is running on port %s", port)
-	//}
+	if opt.Get().ListenCheck {
+		if port := util.FindBrokenLocalPort(opt.Get().PreviewOptions.Expose); port != "" {
+			return fmt.Errorf("no application is running on port %s", port)
+		}
+	}
 
 	if err = preview.Expose(serviceName); err != nil {
 		return err
