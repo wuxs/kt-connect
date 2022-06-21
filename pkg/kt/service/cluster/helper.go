@@ -152,7 +152,8 @@ func createContainer(image string, args []string, envs map[string]string, ports 
 	}
 	for name, port := range ports {
 		container.Ports = append(container.Ports, coreV1.ContainerPort{
-			Name:          name,
+			// TODO: assume port using http protocol, should be replace with user-defined protocol, for istio constraint
+			Name:          fmt.Sprintf("http-%d", port),
 			Protocol:      coreV1.ProtocolTCP,
 			ContainerPort: int32(port),
 		})
