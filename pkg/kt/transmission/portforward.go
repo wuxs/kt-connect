@@ -1,48 +1,56 @@
 package transmission
 
 import (
-	"context"
 	"fmt"
-	opt "github.com/alibaba/kt-connect/pkg/kt/options"
-	"github.com/alibaba/kt-connect/pkg/kt/process"
+	opt "github.com/alibaba/kt-connect/pkg/kt/command/options"
 	"github.com/alibaba/kt-connect/pkg/kt/service/cluster"
 	"github.com/alibaba/kt-connect/pkg/kt/util"
 	"github.com/rs/zerolog/log"
-	"io"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"strings"
+	"time"
 )
 
 // SetupPortForwardToLocal mapping local port to shadow pod ssh port
-func SetupPortForwardToLocal(podName string, remotePort, localPort int) (chan struct{}, error) {
-	stop := make(chan struct{})
-	_, cancel := context.WithCancel(context.Background())
-	// one of the background process start failed and will cancel the started process
+func SetupPortForwardToLocal(podName string, remotePort, localPort int) error {
+	return setupPortForwardToLocal(podName, remotePort, localPort, true)
+}
+
+func setupPortForwardToLocal(podName string, remotePort, localPort int, isInitConnect bool) error {
+	ready := make(chan struct{})
+	var ticker *time.Ticker
 	go func() {
-		process.Stop(<-stop, cancel)
-	}()
-	go func() {
-		if err := portForward(podName, remotePort, localPort, stop); err != nil {
-			log.Error().Err(err).Msgf("Port forward to %d -> %d pod %s interrupted", localPort, remotePort, podName)
-			stop <- struct{}{}
+		if err := portForward(podName, remotePort, localPort, ready); err != nil {
+			if isInitConnect {
+				log.Error().Err(err).Msgf("Failed to setup port forward local:%d -> pod %s:%d", localPort, podName, remotePort)
+			} else {
+				log.Debug().Err(err).Msgf("Port forward local:%d -> pod %s:%d interrupted", localPort, podName, remotePort)
+			}
+			time.Sleep(time.Duration(opt.Get().PortForwardWaitTime) * time.Second)
 		}
+		if ticker != nil {
+			ticker.Stop()
+		}
+		log.Debug().Msgf("Port forward reconnecting ...")
+		_ = setupPortForwardToLocal(podName, remotePort, localPort, false)
 	}()
 
-	if !util.WaitPortBeReady(opt.Get().PortForwardWaitTime, localPort) {
-		return nil, fmt.Errorf("connect to port-forward failed")
+	select {
+	case <-ready:
+		ticker = cluster.SetupPortForwardHeartBeat(localPort)
+		log.Info().Msgf("Port forward local:%d -> pod %s:%d established", localPort, podName, remotePort)
+		return nil
+	case <-time.After(time.Duration(opt.Get().PortForwardWaitTime) * time.Second):
+		return fmt.Errorf("connect to port-forward failed")
 	}
-	cluster.SetupPortForwardHeartBeat(localPort)
-	return stop, nil
 }
 
 // PortForward call port forward api
-func portForward(podName string, remotePort, localPort int, stop chan struct{}) error {
-	ready := make(chan struct{})
+func portForward(podName string, remotePort, localPort int, ready chan struct{}) error {
 	apiPath := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", opt.Get().Namespace, podName)
 	log.Debug().Msgf("Request port forward pod:%d -> local:%d via %s", remotePort, localPort, opt.Get().RuntimeStore.RestConfig.Host)
 	apiUrl, err := parseReqHost(opt.Get().RuntimeStore.RestConfig.Host, apiPath)
@@ -54,15 +62,10 @@ func portForward(podName string, remotePort, localPort int, stop chan struct{}) 
 
 	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, http.MethodPost, apiUrl)
 	ports := []string{fmt.Sprintf("%d:%d", localPort, remotePort)}
-	var out io.Writer = nil
-	if opt.Get().Debug {
-		out = os.Stdout
-	}
-	fw, err := portforward.New(dialer, ports, stop, ready, out, os.Stderr)
+	fw, err := portforward.New(dialer, ports, make(<-chan struct{}), ready, util.BackgroundLogger, util.BackgroundLogger)
 	if err != nil {
 		return err
 	}
-	// in client-go 0.22, this always return nil
 	return fw.ForwardPorts()
 }
 

@@ -1,6 +1,46 @@
 Changelog
 ---
 
+### 0.3.4
+
+> Release time: 2022-05-04
+
+- All of `connect`/`exchange`/`mesh`/`preview` commands support auto reconnection after network recover
+- Record background task log in debug mode as individual log file
+- Fixed an DNS resolving issue introduced in version 0.3.3
+
+### 0.3.3
+
+> Release time: 2022-04-27
+
+- Support put global parameters and subcommand parameters in any order
+- `mesh` command now route requests with unknown header values to the default environment, instead of show "404" error
+- `exchange` and `mesh` commands support service with target ports defined by name
+- `clean` command supports sweeping residual local routing table records
+- Show currently connected kubernetes cluster name and the configured context name at startup
+- Try to listen to a random port to work around the problem of abnormal port checking logic in some environments
+- Fixed an issue of the Router Pod was not correctly deleted when the `mesh` command exited
+- Fixed an issue of the Service created by the `preview` command misusing local port number of the `--expose` parameter
+- Fixed an issue of the unexpired resources of the cluster were cleaned up due to the inconsistency of local time between developers
+- Fixed an issue of the Port Forward failed due to the overlap between the Cluster IP segment and the API Server address
+- Fixed an issue of the proxy DNS resolve CName record incorrectly
+
+### 0.3.2
+
+> Release time: 2022-03-28
+
+- Add new command `recover` to immediately restore the traffic changed by `exchange` or `mesh` command of specified service
+- `connect` command now automatically clean up expired resources in the cluster before each run, without manually executing the `clean` command
+- `connect` command add `--useShadowDeployment` parameter to support deploying shadow containers as Deployment
+- `connect` command add `--podQuota` parameter to support configuring the resource limitation of shadow pod and router pod
+- `connect` command routing rule no longer dependent on the node's PodCIDR configuration
+- `connect` command now monitoring Service changes when using `hosts` dns mode
+- Show owner's username when the target service of `exchange`/`mesh` command is occupied
+- `manual` mode of the `mesh` command now using Service name as the target parameter
+- Fix an issue that the routing setting does not take effect in some cases in Windows environment (thanks to @[dominicqi](https://github.com/dominicqi))
+- Fix an issue that CPU and memory usage often soared in Windows environment
+- Fix error message when execute `ktctl` command without sub-command
+
 ### 0.3.1
 
 > Release time: 2022-02-20
@@ -19,7 +59,7 @@ Changelog
 > Release time: 2022-02-13
 
 - `connect` command supports `tun2socks` mode
-- The `connect` command supports simultaneous resolution of cluster service domain names and local intranet/extranet domain names
+- `connect` command supports simultaneous resolution of cluster service domain names and local intranet/extranet domain names
 - `connect` command supports access to Headless Service on all systems
 - `exchange` command defaults to `selector` mode
 - `mesh` command defaults to `auto` mode
@@ -199,8 +239,8 @@ Changelog
 
 > Release time: 2019-10-01
 
-* Fixed clusterIP cidr missing.
-* Rename docker images address.
+* Fixed clusterIP cidr missing
+* Rename docker images address
 
 ### 0.0.5
 
@@ -225,11 +265,11 @@ Changelog
 > Release time: 2019-06-19
 
 * Fixed issue if istio inject is enable in namespace, and the request can't redirect to local
-* Support exchange run standalone.
+* Support exchange run standalone
 
 ### 0.0.1 
 
 > Release time: 2019-06-18
 
-* Split command to `connect` and `exchange`.
-* Support mutil exchange.
+* Split command to `connect` and `exchange`
+* Support exchange multiple services

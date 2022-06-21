@@ -7,17 +7,17 @@ import (
 	"github.com/miekg/dns"
 	"github.com/rs/zerolog/log"
 	"net"
-	"os"
 	"strings"
 )
 
 // DnsServer nds server
 type DnsServer struct {
+	localDomain string
 	config *dns.ClientConfig
 }
 
 // Start setup dns server
-func Start() {
+func Start(dnsPort int, dnsProtocol string, localDomain string) {
 	config, _ := dns.ClientConfigFromFile(util.ResolvConf)
 	for _, server := range config.Servers {
 		log.Info().Msgf("Load nameserver %s", server)
@@ -25,7 +25,7 @@ func Start() {
 	for _, domain := range config.Search {
 		log.Info().Msgf("Load search %s", domain)
 	}
-	err := common.SetupDnsServer(&DnsServer{config}, common.StandardDnsPort, os.Getenv(common.EnvVarDnsProtocol))
+	err := common.SetupDnsServer(&DnsServer{localDomain, config}, dnsPort, dnsProtocol)
 	if err != nil {
 		log.Error().Err(err).Msgf("Failed to start dns server")
 	}
@@ -52,15 +52,14 @@ func (s *DnsServer) query(req *dns.Msg) (rr []dns.RR) {
 
 	name := req.Question[0].Name
 	qtype := req.Question[0].Qtype
-	answer := common.ReadCache(name, qtype)
+	answer := common.ReadCache(name, qtype, 60)
 	if answer != nil {
 		log.Debug().Msgf("Found domain %s (%d) in cache", name, qtype)
 		return answer
 	}
 
-	localDomains := os.Getenv(common.EnvVarLocalDomains)
-	if localDomains != "" {
-		for _, d := range strings.Split(localDomains, ",") {
+	if s.localDomain != "" {
+		for _, d := range strings.Split(s.localDomain, ",") {
 			if strings.HasSuffix(name, d+".") {
 				name = name[0:(len(name) - len(d) - 1)]
 				break
@@ -100,10 +99,10 @@ func (s *DnsServer) fetchAllPossibleDomains(name string) []string {
 		namesToLookup = append(namesToLookup, name)
 	case 2:
 		if len(domainSuffixes) > 1 {
-			// stateful-set-pod.service name
-			namesToLookup = append(namesToLookup, name+domainSuffixes[0])
 			// service.namespace name
 			namesToLookup = append(namesToLookup, name+domainSuffixes[1])
+			// stateful-set-pod.service name
+			namesToLookup = append(namesToLookup, name+domainSuffixes[0])
 		}
 		// raw domain
 		namesToLookup = append(namesToLookup, name)
@@ -155,11 +154,11 @@ func (s *DnsServer) getResolveServer() (address string, err error) {
 }
 
 // Look for domain record from upstream dns server
-func (s *DnsServer) lookup(domain string, qtype uint16, name string) (rr []dns.RR, err error) {
+func (s *DnsServer) lookup(domain string, qtype uint16, name string) ([]dns.RR, error) {
 	address, err := s.getResolveServer()
 	if err != nil {
 		log.Error().Err(err).Msgf("Failed to fetch upstream dns")
-		return
+		return []dns.RR{}, err
 	}
 	log.Debug().Msgf("Resolving domain %s (%d) via upstream %s", domain, qtype, address)
 
@@ -170,40 +169,28 @@ func (s *DnsServer) lookup(domain string, qtype uint16, name string) (rr []dns.R
 		} else {
 			log.Warn().Err(err).Msgf("Failed to answer name %s (%d) query for %s", name, qtype, domain)
 		}
-		return
+		return []dns.RR{}, err
 	}
 
 	if len(res.Answer) == 0 {
 		log.Debug().Msgf("Empty answer")
 	}
-	for _, item := range res.Answer {
-		log.Debug().Msgf("Response: %s", item.String())
-		r, errInLoop := s.convertAnswer(name, domain, item)
-		if errInLoop != nil {
-			err = errInLoop
-			return
-		}
-		rr = append(rr, r)
-	}
-
-	return
+	return s.convertAnswer(name, res.Answer), nil
 }
 
 // Replace fully qualified domain name with short domain name in dns answer
-func (s *DnsServer) convertAnswer(name, inClusterName string, actual dns.RR) (rr dns.RR, err error) {
-	if name != inClusterName {
-		var parts []string
-		parts = append(parts, name)
-		answer := strings.Split(actual.String(), "\t")
-		parts = append(parts, answer[1:]...)
-		rrStr := strings.Join(parts, " ")
-		rr, err = dns.NewRR(rrStr)
-		if err != nil {
-			return
+func (s *DnsServer) convertAnswer(name string, answer []dns.RR) []dns.RR {
+	cnames := []string{name}
+	for _, item := range answer {
+		log.Debug().Msgf("Response: %s", item.String())
+		if item.Header().Rrtype == dns.TypeCNAME {
+			cnames = append(cnames, item.(*dns.CNAME).Target)
 		}
-	} else {
-		rr = actual
 	}
-	rr.Header().Name = name
-	return
+	for _, item := range answer {
+		if !util.Contains(item.Header().Name, cnames) {
+			item.Header().Name = name
+		}
+	}
+	return answer
 }

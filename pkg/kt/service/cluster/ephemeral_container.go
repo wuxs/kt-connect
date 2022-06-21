@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	opt "github.com/alibaba/kt-connect/pkg/kt/options"
+	opt "github.com/alibaba/kt-connect/pkg/kt/command/options"
 	"github.com/alibaba/kt-connect/pkg/kt/util"
 	coreV1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,7 +36,7 @@ func (k *Kubernetes) AddEphemeralContainer(containerName string, name string,
 	ec := coreV1.EphemeralContainer{
 		EphemeralContainerCommon: coreV1.EphemeralContainerCommon{
 			Name:  containerName,
-			Image: opt.Get().Image,
+			Image: fmt.Sprintf("%s:v%s", util.ImageKtNavigator, opt.Get().RuntimeStore.Version),
 			Env: []coreV1.EnvVar{
 				{Name: util.SshAuthPrivateKey, Value: privateKey},
 			},

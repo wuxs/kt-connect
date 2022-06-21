@@ -15,6 +15,13 @@ const (
 	// ComponentPreview preview command
 	ComponentPreview = "preview"
 
+	// ImageKtShadow default shadow image
+	ImageKtShadow = "registry.cn-hangzhou.aliyuncs.com/rdc-incubator/kt-connect-shadow"
+	// ImageKtRouter default router image
+	ImageKtRouter = "registry.cn-hangzhou.aliyuncs.com/rdc-incubator/kt-connect-router"
+	// ImageKtNavigator default navigator image
+	ImageKtNavigator = "registry.cn-hangzhou.aliyuncs.com/rdc-incubator/kt-connect-navigator"
+
 	// ConnectModeShuttle sshuttle mode
 	ConnectModeShuttle = "sshuttle"
 	// ConnectModeTun2Socks tun2socks mode
@@ -81,6 +88,8 @@ const (
 	ExchangePodInfix = "-kt-exchange-"
 	// MeshPodInfix mesh pod and mesh service name
 	MeshPodInfix = "-kt-mesh-"
+	// RectifierPodPrefix rectifier pod name
+	RectifierPodPrefix = "kt-rectifier-"
 	// RoleConnectShadow shadow role
 	RoleConnectShadow = "shadow-connect"
 	// RoleExchangeShadow shadow role

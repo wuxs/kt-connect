@@ -1,31 +1,37 @@
 package command
 
 import (
+	"fmt"
 	"github.com/alibaba/kt-connect/pkg/kt/command/clean"
 	"github.com/alibaba/kt-connect/pkg/kt/command/general"
-	opt "github.com/alibaba/kt-connect/pkg/kt/options"
-	"github.com/rs/zerolog"
+	opt "github.com/alibaba/kt-connect/pkg/kt/command/options"
+	"github.com/alibaba/kt-connect/pkg/kt/service/cluster"
 	"github.com/rs/zerolog/log"
-	urfave "github.com/urfave/cli"
+	"github.com/spf13/cobra"
 )
 
 // NewCleanCommand return new connect command
-func NewCleanCommand(action ActionInterface) urfave.Command {
-	return urfave.Command{
-		Name:  "clean",
-		Usage: "delete unavailing resources created by kt from kubernetes cluster",
-		UsageText: "ktctl clean [command options]",
-		Flags: general.CleanActionFlag(opt.Get()),
-		Action: func(c *urfave.Context) error {
-			if opt.Get().Debug {
-				zerolog.SetGlobalLevel(zerolog.DebugLevel)
-			}
-			if err := general.CombineKubeOpts(); err != nil {
-				return err
-			}
+func NewCleanCommand(action ActionInterface) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:  "clean",
+		Short: "Delete unavailing resources created by kt from kubernetes cluster",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			return general.Prepare()
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
 			return action.Clean()
 		},
 	}
+
+	cmd.SetUsageTemplate(fmt.Sprintf(general.UsageTemplate, "ktctl clean [command options]"))
+	cmd.Long = cmd.Short
+
+	cmd.Flags().SortFlags = false
+	cmd.InheritedFlags().SortFlags = false
+	cmd.Flags().Int64Var(&opt.Get().CleanOptions.ThresholdInMinus, "thresholdInMinus", cluster.ResourceHeartBeatIntervalMinus * 2 + 1, "Length of allowed disconnection time before a unavailing shadow pod be deleted")
+	cmd.Flags().BoolVar(&opt.Get().CleanOptions.DryRun, "dryRun", false, "Only print name of deployments to be deleted")
+	cmd.Flags().BoolVar(&opt.Get().CleanOptions.SweepLocalRoute, "sweepLocalRoute", false, "Also clean up local route table record created by kt")
+	return cmd
 }
 
 // Clean delete unavailing shadow pods

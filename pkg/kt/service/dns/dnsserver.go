@@ -3,6 +3,7 @@ package dns
 import (
 	"fmt"
 	"github.com/alibaba/kt-connect/pkg/common"
+	opt "github.com/alibaba/kt-connect/pkg/kt/command/options"
 	"github.com/miekg/dns"
 	"github.com/rs/zerolog/log"
 	"time"
@@ -45,7 +46,7 @@ func query(req *dns.Msg, clusterDnsAddr, upstreamDnsAddr string) []dns.RR {
 	domain := req.Question[0].Name
 	qtype := req.Question[0].Qtype
 
-	answer := common.ReadCache(domain, qtype)
+	answer := common.ReadCache(domain, qtype, opt.Get().ConnectOptions.DnsCacheTtl)
 	if answer != nil {
 		log.Debug().Msgf("Found domain %s (%d) in cache", domain, qtype)
 		return answer
@@ -59,7 +60,8 @@ func query(req *dns.Msg, clusterDnsAddr, upstreamDnsAddr string) []dns.RR {
 		return res.Answer
 	} else {
 		if err != nil && !common.IsDomainNotExist(err) {
-			log.Warn().Err(err).Msgf("Failed to lookup %s (%d) in cluster dns (%s)", domain, qtype, clusterDnsAddr)
+			// usually io timeout error
+			log.Debug().Err(err).Msgf("Failed to lookup %s (%d) in cluster dns (%s)", domain, qtype, clusterDnsAddr)
 		}
 
 		res, err = common.NsLookup(domain, qtype, "udp", upstreamDnsAddr)

@@ -3,9 +3,10 @@ package clean
 import (
 	"fmt"
 	"github.com/alibaba/kt-connect/pkg/kt/command/general"
-	opt "github.com/alibaba/kt-connect/pkg/kt/options"
+	opt "github.com/alibaba/kt-connect/pkg/kt/command/options"
 	"github.com/alibaba/kt-connect/pkg/kt/service/cluster"
 	"github.com/alibaba/kt-connect/pkg/kt/service/dns"
+	"github.com/alibaba/kt-connect/pkg/kt/service/tun"
 	"github.com/alibaba/kt-connect/pkg/kt/util"
 	"github.com/rs/zerolog/log"
 	"io/ioutil"
@@ -14,7 +15,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type ResourceToClean struct {
@@ -158,16 +158,22 @@ func PrintClusterResourcesToClean(r *ResourceToClean) {
 }
 
 func TidyLocalResources() {
-	log.Debug().Msg("Cleaning up unused pid files ...")
+	log.Debug().Msg("Cleaning up unused pid files")
 	cleanPidFiles()
-	log.Debug().Msg("Cleaning up unused local rsa keys ...")
+	log.Debug().Msg("Cleaning up unused local rsa keys")
 	util.CleanRsaKeys()
 	if util.GetDaemonRunning(util.ComponentConnect) < 0 {
 		if util.IsRunAsAdmin() {
-			log.Debug().Msg("Cleaning up hosts file ...")
+			log.Debug().Msg("Cleaning up hosts file")
 			dns.DropHosts()
-			log.Debug().Msg("Cleaning DNS configuration ...")
+			log.Debug().Msg("Cleaning DNS configuration")
 			dns.Ins().RestoreNameServer()
+			if opt.Get().CleanOptions.SweepLocalRoute {
+				log.Info().Msgf("Cleaning route table")
+				if err := tun.Ins().RestoreRoute(); err != nil {
+					log.Warn().Err(err).Msgf("Unable to clean up route table")
+				}
+			}
 		} else {
 			log.Info().Msgf("Not %s user, DNS cleanup skipped", util.GetAdminUserName())
 		}
@@ -207,27 +213,31 @@ func parseComponentAndPid(pidFileName string) (string, int) {
 
 func analysisExpiredPods(pod coreV1.Pod, cleanThresholdInMinus int64, resourceToClean *ResourceToClean) {
 	lastHeartBeat := util.ParseTimestamp(pod.Annotations[util.KtLastHeartBeat])
-	if lastHeartBeat > 0 && isExpired(lastHeartBeat, cleanThresholdInMinus) {
+	if lastHeartBeat < 0 {
+		log.Debug().Msgf("Pod %s does no have heart beat annotation", pod.Name)
+	} else if isExpired(lastHeartBeat, cleanThresholdInMinus) {
 		log.Debug().Msgf(" * pod %s expired, lastHeartBeat: %d ", pod.Name, lastHeartBeat)
 		if pod.DeletionTimestamp == nil {
 			resourceToClean.PodsToDelete = append(resourceToClean.PodsToDelete, pod.Name)
 		}
 		analysisConfigAnnotation(pod.Labels[util.KtRole], util.String2Map(pod.Annotations[util.KtConfig]), resourceToClean)
-	} else {
-		log.Debug().Msgf("Pod %s does no have heart beat annotation", pod.Name)
 	}
 }
 
 func analysisExpiredConfigmaps(cf coreV1.ConfigMap, cleanThresholdInMinus int64, resourceToClean *ResourceToClean) {
 	lastHeartBeat := util.ParseTimestamp(cf.Annotations[util.KtLastHeartBeat])
-	if lastHeartBeat > 0 && isExpired(lastHeartBeat, cleanThresholdInMinus) {
+	if lastHeartBeat < 0 {
+		log.Debug().Msgf("Configmap %s does no have heart beat annotation", cf.Name)
+	} else if isExpired(lastHeartBeat, cleanThresholdInMinus) {
 		resourceToClean.ConfigMapsToDelete = append(resourceToClean.ConfigMapsToDelete, cf.Name)
 	}
 }
 
 func analysisExpiredDeployments(app appV1.Deployment, cleanThresholdInMinus int64, resourceToClean *ResourceToClean) {
 	lastHeartBeat := util.ParseTimestamp(app.Annotations[util.KtLastHeartBeat])
-	if lastHeartBeat > 0 && isExpired(lastHeartBeat, cleanThresholdInMinus) {
+	if lastHeartBeat < 0 {
+		log.Debug().Msgf("Deployment %s does no have heart beat annotation", app.Name)
+	} else if isExpired(lastHeartBeat, cleanThresholdInMinus) {
 		resourceToClean.DeploymentsToDelete = append(resourceToClean.DeploymentsToDelete, app.Name)
 		analysisConfigAnnotation(app.Labels[util.KtRole], util.String2Map(app.Annotations[util.KtConfig]), resourceToClean)
 	}
@@ -235,7 +245,9 @@ func analysisExpiredDeployments(app appV1.Deployment, cleanThresholdInMinus int6
 
 func analysisExpiredServices(svc coreV1.Service, cleanThresholdInMinus int64, resourceToClean *ResourceToClean) {
 	lastHeartBeat := util.ParseTimestamp(svc.Annotations[util.KtLastHeartBeat])
-	if lastHeartBeat > 0 && isExpired(lastHeartBeat, cleanThresholdInMinus) {
+	if lastHeartBeat < 0 {
+		log.Debug().Msgf("Service %s does no have heart beat annotation", svc.Name)
+	} else if isExpired(lastHeartBeat, cleanThresholdInMinus) {
 		resourceToClean.ServicesToDelete = append(resourceToClean.ServicesToDelete, svc.Name)
 	}
 }
@@ -245,7 +257,7 @@ func analysisLockAndOrphanServices(svcs []coreV1.Service, resourceToClean *Resou
 		if svc.Annotations == nil {
 			continue
 		}
-		if lock, ok := svc.Annotations[util.KtLock]; ok && time.Now().Unix() - util.ParseTimestamp(lock) > general.LockTimeout {
+		if lock, exists := svc.Annotations[util.KtLock]; exists && util.GetTime() - util.ParseTimestamp(lock) > general.LockTimeout {
 			resourceToClean.ServicesToUnlock = append(resourceToClean.ServicesToUnlock, svc.Name)
 		}
 		if svc.Annotations[util.KtSelector] != "" {
@@ -276,7 +288,7 @@ func analysisConfigAnnotation(role string, config map[string]string, resourceToC
 	}
 	// auto mesh and selector exchange
 	if role == util.RoleRouter || role == util.RoleExchangeShadow {
-		if service, ok := config["service"]; ok {
+		if service, exists := config["service"]; exists {
 			resourceToClean.ServicesToRecover = append(resourceToClean.ServicesToRecover, service)
 		}
 	}
@@ -302,6 +314,6 @@ func isRouterPodExist(svcName, namespace string) bool {
 }
 
 func isExpired(lastHeartBeat, cleanThresholdInMinus int64) bool {
-	return time.Now().Unix()-lastHeartBeat > cleanThresholdInMinus*60
+	return util.GetTime() - lastHeartBeat > cleanThresholdInMinus*60
 }
 

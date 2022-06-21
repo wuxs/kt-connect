@@ -3,7 +3,7 @@ package exchange
 import (
 	"fmt"
 	"github.com/alibaba/kt-connect/pkg/kt/command/general"
-	opt "github.com/alibaba/kt-connect/pkg/kt/options"
+	opt "github.com/alibaba/kt-connect/pkg/kt/command/options"
 	"github.com/alibaba/kt-connect/pkg/kt/service/cluster"
 	"github.com/alibaba/kt-connect/pkg/kt/util"
 	"github.com/rs/zerolog/log"
@@ -25,7 +25,7 @@ func ByScale(resourceName string) error {
 
 	log.Info().Msgf("Creating exchange shadow %s in namespace %s", shadowPodName, opt.Get().Namespace)
 	if err = general.CreateShadowAndInbound(shadowPodName, opt.Get().ExchangeOptions.Expose,
-		getExchangeLabels(app), getExchangeAnnotation()); err != nil {
+		getExchangeLabels(app), getExchangeAnnotation(), map[int]string{}); err != nil {
 		return err
 	}
 

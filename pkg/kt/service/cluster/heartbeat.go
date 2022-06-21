@@ -2,15 +2,51 @@ package cluster
 
 import (
 	"fmt"
-	"github.com/alibaba/kt-connect/pkg/common"
+	opt "github.com/alibaba/kt-connect/pkg/kt/command/options"
 	"github.com/alibaba/kt-connect/pkg/kt/util"
 	"github.com/rs/zerolog/log"
 	"net"
+	"strconv"
+	"strings"
 	"time"
 )
 
 const ResourceHeartBeatIntervalMinus = 2
 const portForwardHeartBeatIntervalSec = 60
+
+// LastHeartBeatStatus record last heart beat status to avoid verbose log
+var LastHeartBeatStatus = make(map[string]bool)
+
+// SetupTimeDifference get time difference between cluster and local
+func SetupTimeDifference() error {
+	rectifierPodName := fmt.Sprintf("%s%s", util.RectifierPodPrefix, strings.ToLower(util.RandomString(5)))
+	_, err := Ins().CreateRectifierPod(rectifierPodName)
+	if err != nil {
+		return err
+	}
+	stdout, stderr, err := Ins().ExecInPod(util.DefaultContainer, rectifierPodName, opt.Get().Namespace, "date", "+%s")
+	if err != nil {
+		return err
+	}
+	go func() {
+		if err2 := Ins().RemovePod(rectifierPodName, opt.Get().Namespace); err2 != nil {
+			log.Debug().Err(err).Msgf("Failed to remove pod %s", rectifierPodName)
+		}
+	}()
+	remoteTime, err := strconv.ParseInt(stdout, 10, 0)
+	if err != nil {
+		log.Warn().Msgf("Invalid cluster time: '%s' %s", stdout, stderr)
+		return err
+	}
+	timeDifference := remoteTime - time.Now().Unix()
+	if timeDifference >= -1 && timeDifference <= 1 {
+		log.Debug().Msgf("No time difference")
+	} else {
+		log.Debug().Msgf("Time difference is %d", timeDifference)
+	}
+	util.TimeDifference = timeDifference
+	return nil
+}
 
 // SetupHeartBeat setup heartbeat watcher
 func SetupHeartBeat(name, namespace string, updater func(string, string)) {
@@ -23,22 +59,26 @@ func SetupHeartBeat(name, namespace string, updater func(string, string)) {
 }
 
 // SetupPortForwardHeartBeat setup heartbeat watcher for port forward
-func SetupPortForwardHeartBeat(port int) {
-	ticker := time.NewTicker(time.Second *portForwardHeartBeatIntervalSec - util.RandomSeconds(0, 5))
+func SetupPortForwardHeartBeat(port int) *time.Ticker {
+	ticker := time.NewTicker(portForwardHeartBeatIntervalSec * time.Second - util.RandomSeconds(0, 5))
 	go func() {
-		for range ticker.C {
-			if conn, err := net.Dial("tcp", fmt.Sprintf(":%d", port)); err != nil {
-				log.Warn().Err(err).Msgf("Heartbeat port forward %d ticked failed: %s", port, err)
-			} else {
-				log.Debug().Msgf("Heartbeat port forward %d ticked at %s", port, formattedTime())
-				_ = conn.Close()
+		TickLoop:
+		for {
+			select {
+			case <-ticker.C:
+				if conn, err := net.Dial("tcp", fmt.Sprintf(":%d", port)); err != nil {
+					log.Warn().Err(err).Msgf("Heartbeat port forward %d ticked failed", port)
+				} else {
+					log.Debug().Msgf("Heartbeat port forward %d ticked at %s", port, util.FormattedTime())
+					_ = conn.Close()
+				}
+			case <-time.After(2 * portForwardHeartBeatIntervalSec * time.Second):
+				log.Debug().Msgf("Port forward heartbeat %d stopped", port)
+				break TickLoop
 			}
 		}
 	}()
-}
-
-func formattedTime() string {
-	return time.Now().Format(common.YyyyMmDdHhMmSs)
+	return ticker
 }
 
 func resourceHeartbeatPatch() string {

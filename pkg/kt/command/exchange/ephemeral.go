@@ -3,7 +3,7 @@ package exchange
 import (
 	"fmt"
 	"github.com/alibaba/kt-connect/pkg/kt/command/general"
-	opt "github.com/alibaba/kt-connect/pkg/kt/options"
+	opt "github.com/alibaba/kt-connect/pkg/kt/command/options"
 	"github.com/alibaba/kt-connect/pkg/kt/service/cluster"
 	"github.com/alibaba/kt-connect/pkg/kt/service/sshchannel"
 	"github.com/alibaba/kt-connect/pkg/kt/transmission"
@@ -12,7 +12,6 @@ import (
 	coreV1 "k8s.io/api/core/v1"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -142,15 +141,9 @@ func exchangeWithEphemeralContainer(exposePorts string, localSSHPort int, privat
 	if err != nil {
 		return err
 	}
-	portPairs := strings.Split(exposePorts, ",")
-	for _, exposePort := range portPairs {
-		localPort, remotePort, err2 := util.ParsePortMapping(exposePort)
-		if err2 != nil {
-			return err2
-		}
-		var wg sync.WaitGroup
-		transmission.ExposeLocalPort(&wg, localPort, redirectPorts[remotePort], localSSHPort, privateKey)
-		wg.Done()
+
+	if err = transmission.ForwardRemotePortsViaSshTunnel(exposePorts, localSSHPort, privateKey); err != nil {
+		return err
 	}
 
 	return nil

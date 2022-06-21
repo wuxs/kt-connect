@@ -3,13 +3,14 @@ package connect
 import (
 	"fmt"
 	"github.com/alibaba/kt-connect/pkg/common"
-	opt "github.com/alibaba/kt-connect/pkg/kt/options"
+	opt "github.com/alibaba/kt-connect/pkg/kt/command/options"
 	"github.com/alibaba/kt-connect/pkg/kt/service/cluster"
 	"github.com/alibaba/kt-connect/pkg/kt/service/sshchannel"
 	"github.com/alibaba/kt-connect/pkg/kt/service/tun"
 	"github.com/alibaba/kt-connect/pkg/kt/transmission"
 	"github.com/alibaba/kt-connect/pkg/kt/util"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/net/proxy"
 	"strings"
 	"time"
 )
@@ -19,26 +20,17 @@ func ByTun2Socks() error {
 	if err != nil {
 		return err
 	}
-	go activePodRoute(podName)
 
-	localSshPort, err := util.GetRandomTcpPort()
-	if err != nil {
+	localSshPort := util.GetRandomTcpPort()
+	if err = transmission.SetupPortForwardToLocal(podName, common.StandardSshPort, localSshPort); err != nil {
 		return err
 	}
-	if _, err = transmission.SetupPortForwardToLocal(podName, common.StandardSshPort, localSshPort); err != nil {
-		return err
-	}
-	if err = startSocks5Connection(privateKeyPath, localSshPort); err != nil {
+	if err = startSocks5Connection(podIP, privateKeyPath, localSshPort, true); err != nil {
 		return err
 	}
 
 	if opt.Get().ConnectOptions.DisableTunDevice {
 		showSetupSocksMessage(opt.Get().ConnectOptions.SocksPort)
-		if strings.HasPrefix(opt.Get().ConnectOptions.DnsMode, util.DnsModeHosts) {
-			return setupDns(podName, podIP)
-		} else {
-			return nil
-		}
 	} else {
 		if err = tun.Ins().CheckContext(); err != nil {
 			return err
@@ -55,17 +47,8 @@ func ByTun2Socks() error {
 			}
 			log.Info().Msgf("Route to tun device completed")
 		}
-		return setupDns(podName, podIP)
 	}
-}
-
-func activePodRoute(podName string) {
-	stdout, stderr, err := cluster.Ins().ExecInPod(util.DefaultContainer, podName, opt.Get().Namespace,
-		"nslookup", "-vc", "kubernetes.default.svc")
-	log.Debug().Msgf("Active DNS %s", strings.TrimSpace(strings.Split(stdout, "\n")[0]))
-	if stderr != "" || err != nil {
-		log.Warn().Msgf("Pod route not ready yet, %s", stderr)
-	}
+	return setupDns(podName, podIP)
 }
 
 func setupTunRoute() error {
@@ -93,33 +76,74 @@ func setupTunRoute() error {
 	return nil
 }
 
-func startSocks5Connection(privateKey string, localSshPort int) error {
-	var success = make(chan error)
-	go func() {
-		time.Sleep(1 * time.Second)
-		success <-nil
-	}()
+func startSocks5Connection(podIP, privateKey string, localSshPort int, isInitConnect bool) error {
+	var res = make(chan error)
+	var ticker *time.Ticker
+	sshAddress := fmt.Sprintf("127.0.0.1:%d", localSshPort)
+	socks5Address := fmt.Sprintf("127.0.0.1:%d", opt.Get().ConnectOptions.SocksPort)
+	gone := false
 	go func() {
 		// will hang here if not error happen
-		success <- sshchannel.Ins().StartSocks5Proxy(
-			privateKey,
-			fmt.Sprintf("127.0.0.1:%d", localSshPort),
-			fmt.Sprintf("127.0.0.1:%d", opt.Get().ConnectOptions.SocksPort),
-		)
+		err := sshchannel.Ins().StartSocks5Proxy(privateKey, sshAddress, socks5Address)
+		if !gone {
+			res <-err
+		}
+		log.Debug().Err(err).Msgf("Socks proxy interrupted")
+		if ticker != nil {
+			ticker.Stop()
+		}
+		time.Sleep(10 * time.Second)
+		log.Debug().Msgf("Socks proxy reconnecting ...")
+		_ = startSocks5Connection(podIP, privateKey, localSshPort, false)
 	}()
-	return <-success
+	select {
+	case err := <-res:
+		if isInitConnect {
+			log.Warn().Err(err).Msgf("Failed to setup socks proxy connection")
+		}
+		return err
+	case <-time.After(1 * time.Second):
+		ticker = setupSocks5HeartBeat(podIP, socks5Address)
+		log.Info().Msgf("Socks proxy established")
+		gone = true
+		return nil
+	}
+}
+
+func setupSocks5HeartBeat(podIP, socks5Address string) *time.Ticker {
+	dialer, err := proxy.SOCKS5("tcp", socks5Address, nil, proxy.Direct)
+	if err != nil {
+		log.Warn().Err(err).Msgf("Failed to create socks proxy heart beat ticker")
+	}
+	ticker := time.NewTicker(60 * time.Second)
+	go func() {
+	TickLoop:
+		for {
+			select {
+			case <-ticker.C:
+				if c, err2 := dialer.Dial("tcp", fmt.Sprintf("%s:%d", podIP, common.StandardSshPort)); err2 != nil {
+					log.Debug().Err(err2).Msgf("Socks proxy heartbeat interrupted")
+				} else {
+					_ = c.Close()
+					log.Debug().Msgf("Heartbeat socks proxy ticked at %s", util.FormattedTime())
+				}
+			case <-time.After(2 * 60 * time.Second):
+				log.Debug().Msgf("Socks proxy heartbeat stopped")
+				break TickLoop
+			}
+		}
+	}()
+	return ticker
 }
 
 func showSetupSocksMessage(socksPort int) {
-	log.Info().Msgf("--------------------------------------------------------------")
 	if util.IsWindows() {
 		if util.IsCmd() {
-			log.Info().Msgf("Please setup proxy config by: set http_proxy=socks5://127.0.0.1:%d", socksPort)
+			log.Info().Msgf(">> Please setup proxy config by: set http_proxy=socks5://127.0.0.1:%d <<", socksPort)
 		} else {
-			log.Info().Msgf("Please setup proxy config by: $env:http_proxy=\"socks5://127.0.0.1:%d\"", socksPort)
+			log.Info().Msgf(">> Please setup proxy config by: $env:http_proxy=\"socks5://127.0.0.1:%d\" <<", socksPort)
 		}
 	} else {
-		log.Info().Msgf("Please setup proxy config by: export http_proxy=socks5://127.0.0.1:%d", socksPort)
+		log.Info().Msgf(">> Please setup proxy config by: export http_proxy=socks5://127.0.0.1:%d <<", socksPort)
 	}
-	log.Info().Msgf("--------------------------------------------------------------")
 }

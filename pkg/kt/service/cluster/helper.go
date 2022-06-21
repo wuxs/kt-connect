@@ -2,7 +2,8 @@ package cluster
 
 import (
 	"fmt"
-	opt "github.com/alibaba/kt-connect/pkg/kt/options"
+
+	opt "github.com/alibaba/kt-connect/pkg/kt/command/options"
 	"github.com/alibaba/kt-connect/pkg/kt/util"
 	appV1 "k8s.io/api/apps/v1"
 	coreV1 "k8s.io/api/core/v1"
@@ -76,7 +77,8 @@ func createDeployment(metaAndSpec *PodMetaAndSpec) *appV1.Deployment {
 			},
 			Template: coreV1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: originLabels,
+					Labels:      originLabels,
+					Annotations: metaAndSpec.Meta.Annotations,
 				},
 				Spec: createPod(metaAndSpec).Spec,
 			},
@@ -115,7 +117,7 @@ func createPod(metaAndSpec *PodMetaAndSpec) *coreV1.Pod {
 	return pod
 }
 
-func createContainer(image string, args []string, envs map[string]string, ports []int) coreV1.Container {
+func createContainer(image string, args []string, envs map[string]string, ports map[string]int) coreV1.Container {
 	var envVar []coreV1.EnvVar
 	for k, v := range envs {
 		envVar = append(envVar, coreV1.EnvVar{Name: k, Value: v})
@@ -141,18 +143,18 @@ func createContainer(image string, args []string, envs map[string]string, ports 
 		},
 		Ports: []coreV1.ContainerPort{},
 		Resources: coreV1.ResourceRequirements{
-			Limits: coreV1.ResourceList{},
+			Limits:   coreV1.ResourceList{},
 			Requests: coreV1.ResourceList{},
 		},
 	}
 	if opt.Get().PodQuota != "" {
 		addResourceLimit(&container, opt.Get().PodQuota)
 	}
-	for _, port := range ports {
+	for name, port := range ports {
 		container.Ports = append(container.Ports, coreV1.ContainerPort{
 			// TODO: assume port using http protocol, should be replace with user-defined protocol, for istio constraint
-			Name: fmt.Sprintf("http-%d", port),
-			Protocol: coreV1.ProtocolTCP,
+			Name:          fmt.Sprintf("http-%d", port),
+			Protocol:      coreV1.ProtocolTCP,
 			ContainerPort: int32(port),
 		})
 	}

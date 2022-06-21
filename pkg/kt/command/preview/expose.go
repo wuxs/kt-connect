@@ -2,7 +2,7 @@ package preview
 
 import (
 	"fmt"
-	opt "github.com/alibaba/kt-connect/pkg/kt/options"
+	opt "github.com/alibaba/kt-connect/pkg/kt/command/options"
 	"github.com/alibaba/kt-connect/pkg/kt/service/cluster"
 	"github.com/alibaba/kt-connect/pkg/kt/transmission"
 	"github.com/alibaba/kt-connect/pkg/kt/util"
@@ -30,7 +30,7 @@ func exposeLocalService(serviceName, shadowPodName string, labels, annotations m
 
 	envs := make(map[string]string)
 	_, podName, privateKeyPath, err := cluster.Ins().GetOrCreateShadow(shadowPodName, labels, annotations, envs,
-		opt.Get().PreviewOptions.Expose)
+		opt.Get().PreviewOptions.Expose, map[int]string{})
 	if err != nil {
 		return err
 	}
@@ -39,21 +39,22 @@ func exposeLocalService(serviceName, shadowPodName string, labels, annotations m
 	portPairs := strings.Split(opt.Get().PreviewOptions.Expose, ",")
 	ports := make(map[int]int)
 	for _, exposePort := range portPairs {
-		localPort, remotePort, err2 := util.ParsePortMapping(exposePort)
+		_, remotePort, err2 := util.ParsePortMapping(exposePort)
 		if err2 != nil {
 			return err
 		}
-		ports[localPort] = remotePort
+		// service port to target port
+		ports[remotePort] = remotePort
 	}
 	if _, err = cluster.Ins().CreateService(&cluster.SvcMetaAndSpec{
 		Meta: &cluster.ResourceMeta{
-			Name: serviceName,
-			Namespace: opt.Get().Namespace,
-			Labels: map[string]string{},
+			Name:        serviceName,
+			Namespace:   opt.Get().Namespace,
+			Labels:      map[string]string{},
 			Annotations: map[string]string{},
 		},
-		External: opt.Get().PreviewOptions.External,
-		Ports: ports,
+		External:  opt.Get().PreviewOptions.External,
+		Ports:     ports,
 		Selectors: labels,
 	}); err != nil {
 		return err

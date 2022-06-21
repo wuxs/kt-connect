@@ -5,7 +5,7 @@ import (
 )
 
 // Contains check whether obj exist in target, the type of target can be an array, slice or map
-func Contains(obj interface{}, target interface{}) bool {
+func Contains(obj any, target any) bool {
 	targetValue := reflect.ValueOf(target)
 	switch reflect.TypeOf(target).Kind() {
 	case reflect.Slice, reflect.Array:
@@ -58,7 +58,7 @@ func MergeMap(m1, m2 map[string]string) map[string]string {
 	return cp
 }
 
-func ListEquals(src, target []string) bool {
+func ArrayEquals(src, target []string) bool {
 	if len(src) != len(target) {
 		return false
 	}
@@ -75,4 +75,25 @@ func ListEquals(src, target []string) bool {
 		}
 	}
 	return true
+}
+
+func ArrayDelete(arr []string, item string) []string {
+	count := 0
+	for _, v := range arr {
+		if v == item {
+			count++
+		}
+	}
+	if count == 0 {
+		return arr
+	}
+	newArr := make([]string, len(arr) - count)
+	i := 0
+	for _, v := range arr {
+		if v != item {
+			newArr[i] = v
+			i++
+		}
+	}
+	return newArr
 }

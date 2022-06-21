@@ -29,6 +29,7 @@ func (s *Cli) SetRoute(ipRange []string) error {
 	var lastErr error
 	anyRouteOk := false
 	for _, r := range ipRange {
+		log.Info().Msgf("Adding route to %s", r)
 		// run command: ip route add 10.96.0.0/16 dev kt0
 		_, _, err = util.RunAndWait(exec.Command("ip",
 			"route",
@@ -48,6 +49,11 @@ func (s *Cli) SetRoute(ipRange []string) error {
 		return AllRouteFailError{lastErr}
 	}
 	return lastErr
+}
+
+// RestoreRoute delete route rules made by kt
+func (s *Cli) RestoreRoute() error {
+	return nil
 }
 
 func (s *Cli) GetName() string {

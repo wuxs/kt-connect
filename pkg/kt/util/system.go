@@ -2,6 +2,7 @@ package util
 
 import (
 	"fmt"
+	"github.com/alibaba/kt-connect/pkg/common"
 	"github.com/rs/zerolog/log"
 	"io/ioutil"
 	"os"
@@ -14,6 +15,9 @@ import (
 	fs "github.com/fsnotify/fsnotify"
 	ps "github.com/mitchellh/go-ps"
 )
+
+// TimeDifference seconds between remote and local time
+var TimeDifference int64 = 0
 
 // GetDaemonRunning fetch daemon pid if exist
 func GetDaemonRunning(componentName string) int {
@@ -100,9 +104,14 @@ func FixFileOwner(path string) {
 	_ = os.Chown(path, uid, gid)
 }
 
+// GetTime get time with rectification
+func GetTime() int64 {
+	return time.Now().Unix() + TimeDifference
+}
+
 // GetTimestamp get current timestamp
 func GetTimestamp() string {
-	return strconv.FormatInt(time.Now().Unix(), 10)
+	return strconv.FormatInt(GetTime(), 10)
 }
 
 // ParseTimestamp parse timestamp to unix time
@@ -112,6 +121,11 @@ func ParseTimestamp(timestamp string) int64 {
 		return -1
 	}
 	return unixTime
+}
+
+// FormattedTime get timestamp to print
+func FormattedTime() string {
+	return time.Now().Format(common.YyyyMmDdHhMmSs)
 }
 
 // GetLocalUserName get current username

@@ -71,33 +71,43 @@ func (k *Kubernetes) RemoveService(name, namespace string) (err error) {
 }
 
 func (k *Kubernetes) UpdateServiceHeartBeat(name, namespace string) {
-	log.Debug().Msgf("Heartbeat service %s ticked at %s", name, formattedTime())
 	if _, err := k.Clientset.CoreV1().Services(namespace).
 		Patch(context.TODO(), name, types.JSONPatchType, []byte(resourceHeartbeatPatch()), metav1.PatchOptions{}); err != nil {
-		log.Warn().Err(err).Msgf("Failed to update service heart beat")
+		if healthy, exists := LastHeartBeatStatus["service_" + name]; healthy || !exists {
+			log.Warn().Err(err).Msgf("Failed to update heart beat of service %s", name)
+		} else {
+			log.Debug().Err(err).Msgf("Service %s heart beat interrupted", name)
+		}
+		LastHeartBeatStatus["service_" + name] = false
+	} else {
+		log.Debug().Msgf("Heartbeat service %s ticked at %s", name, util.FormattedTime())
+		LastHeartBeatStatus["service_" + name] = true
 	}
 }
 
 // WatchService ...
 func (k *Kubernetes) WatchService(name, namespace string, fAdd, fDel, fMod func(*coreV1.Service)) {
 	k.watchResource(name, namespace, string(coreV1.ResourceServices), &coreV1.Service{},
-		func(obj interface{}) {
-			if fAdd != nil {
-				log.Debug().Msgf("Service %s added", obj.(*coreV1.Service).Name)
-				fAdd(obj.(*coreV1.Service))
-			}
+		func(obj any) {
+			handleServiceEvent(obj, "added", fAdd)
 		},
-		func(obj interface{}) {
-			if fDel != nil {
-				log.Debug().Msgf("Service %s deleted", obj.(*coreV1.Service).Name)
-				fDel(obj.(*coreV1.Service))
-			}
+		func(obj any) {
+			handleServiceEvent(obj, "deleted", fDel)
 		},
-		func(obj interface{}) {
-			if fMod != nil {
-				log.Debug().Msgf("Service %s modified", obj.(*coreV1.Service).Name)
-				fMod(obj.(*coreV1.Service))
-			}
+		func(obj any) {
+			handleServiceEvent(obj, "modified", fMod)
 		},
 	)
+}
+
+func handleServiceEvent(obj any, status string, f func(*coreV1.Service)) {
+	switch obj.(type) {
+	case *coreV1.Service:
+		if f != nil {
+			log.Debug().Msgf("Service %s %s", obj.(*coreV1.Service).Name, status)
+			f(obj.(*coreV1.Service))
+		}
+	default:
+		// ignore
+	}
 }

@@ -3,7 +3,7 @@ package connect
 import (
 	"fmt"
 	"github.com/alibaba/kt-connect/pkg/common"
-	opt "github.com/alibaba/kt-connect/pkg/kt/options"
+	opt "github.com/alibaba/kt-connect/pkg/kt/command/options"
 	"github.com/alibaba/kt-connect/pkg/kt/service/cluster"
 	"github.com/alibaba/kt-connect/pkg/kt/service/dns"
 	"github.com/alibaba/kt-connect/pkg/kt/transmission"
@@ -36,11 +36,10 @@ func setupDns(shadowPodName, shadowPodIp string) error {
 		}
 		watchServicesAndPods(opt.Get().Namespace, svcToIp, headlessPods, true)
 
-		forwardedPodPort, err := util.GetRandomTcpPort()
-		if err != nil {
+		forwardedPodPort := util.GetRandomTcpPort()
+		if err := transmission.SetupPortForwardToLocal(shadowPodName, common.StandardDnsPort, forwardedPodPort); err != nil {
 			return err
 		}
-		transmission.SetupPortForwardToLocal(shadowPodName, common.StandardDnsPort, forwardedPodPort)
 
 		dnsPort := util.AlternativeDnsPort
 		if util.IsWindows() {
@@ -48,7 +47,7 @@ func setupDns(shadowPodName, shadowPodIp string) error {
 		}
 		// must setup name server before change dns config
 		// otherwise the upstream name server address will be incorrect in linux
-		if err = dns.SetupLocalDns(forwardedPodPort, dnsPort); err != nil {
+		if err := dns.SetupLocalDns(forwardedPodPort, dnsPort); err != nil {
 			log.Error().Err(err).Msgf("Failed to setup local dns server")
 			return err
 		}
@@ -65,7 +64,7 @@ func watchServicesAndPods(namespace string, svcToIp map[string]string, headlessP
 	go cluster.Ins().WatchService("", namespace,
 		func(svc *coreV1.Service) {
 			// ignore add service event during watch setup
-			if time.Now().Unix()-setupTime > 3 {
+			if time.Now().Unix() - setupTime > 3 {
 				svcToIp, headlessPods = getServiceHosts(namespace, shortDomainOnly)
 				_ = dns.DumpHosts(svcToIp, namespace)
 			}
@@ -148,7 +147,7 @@ func getOrCreateShadow() (string, string, string, error) {
 	}
 
 	endPointIP, podName, privateKeyPath, err := cluster.Ins().GetOrCreateShadow(shadowPodName, getLabels(),
-		make(map[string]string), getEnvs(), "")
+		make(map[string]string), getEnvs(), "", map[int]string{})
 	if err != nil {
 		return "", "", "", err
 	}

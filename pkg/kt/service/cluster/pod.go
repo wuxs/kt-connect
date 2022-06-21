@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	opt "github.com/alibaba/kt-connect/pkg/kt/options"
+	opt "github.com/alibaba/kt-connect/pkg/kt/command/options"
 	"github.com/alibaba/kt-connect/pkg/kt/util"
 	"github.com/rs/zerolog/log"
 	"io"
@@ -28,7 +28,7 @@ type PodMetaAndSpec struct {
 	Meta  *ResourceMeta
 	Image string
 	Envs  map[string]string
-	Ports []int
+	Ports map[string]int
 	IsLeaf bool
 }
 
@@ -72,33 +72,31 @@ func (k *Kubernetes) WaitPodTerminate(name, namespace string) (*coreV1.Pod, erro
 }
 
 func (k *Kubernetes) UpdatePodHeartBeat(name, namespace string) {
-	log.Debug().Msgf("Heartbeat pod %s ticked at %s", name, formattedTime())
 	if _, err := k.Clientset.CoreV1().Pods(namespace).
 		Patch(context.TODO(), name, types.JSONPatchType, []byte(resourceHeartbeatPatch()), metav1.PatchOptions{}); err != nil {
-		log.Warn().Err(err).Msgf("Failed to update pod heart beat")
+		if healthy, exists := LastHeartBeatStatus["pod_" + name]; healthy || !exists {
+			log.Warn().Err(err).Msgf("Failed to update heart beat of pod %s", name)
+		} else {
+			log.Debug().Err(err).Msgf("Pod %s heart beat interrupted", name)
+		}
+		LastHeartBeatStatus["pod_" + name] = false
+	} else {
+		log.Debug().Msgf("Heartbeat pod %s ticked at %s", name, util.FormattedTime())
+		LastHeartBeatStatus["pod_" + name] = true
 	}
 }
 
 // WatchPod ...
 func (k *Kubernetes) WatchPod(name, namespace string, fAdd, fDel, fMod func(*coreV1.Pod)) {
 	k.watchResource(name, namespace, string(coreV1.ResourcePods), &coreV1.Pod{},
-		func(obj interface{}) {
-			if fAdd != nil {
-				log.Debug().Msgf("Pod %s added", obj.(*coreV1.Pod).Name)
-				fAdd(obj.(*coreV1.Pod))
-			}
+		func(obj any) {
+			handlePodEvent(obj, "added", fAdd)
 		},
-		func(obj interface{}) {
-			if fDel != nil {
-				log.Debug().Msgf("Pod %s deleted", obj.(*coreV1.Pod).Name)
-				fDel(obj.(*coreV1.Pod))
-			}
+		func(obj any) {
+			handlePodEvent(obj, "deleted", fDel)
 		},
-		func(obj interface{}) {
-			if fMod != nil {
-				log.Debug().Msgf("Pod %s modified", obj.(*coreV1.Pod).Name)
-				fMod(obj.(*coreV1.Pod))
-			}
+		func(obj any) {
+			handlePodEvent(obj, "modified", fMod)
 		},
 	)
 }
@@ -151,10 +149,10 @@ func (k *Kubernetes) IncreasePodRef(name string, namespace string) error {
 }
 
 // DecreasePodRef decrease pod ref count by 1
-func (k *Kubernetes) DecreasePodRef(name string, namespace string) (cleanup bool, err error) {
+func (k *Kubernetes) DecreasePodRef(name string, namespace string) (bool, error) {
 	pod, err := k.GetPod(name, namespace)
 	if err != nil {
-		return
+		return false, err
 	}
 	refCount := pod.Annotations[util.KtRefCount]
 	if refCount == "1" {
@@ -163,12 +161,24 @@ func (k *Kubernetes) DecreasePodRef(name string, namespace string) (cleanup bool
 	} else {
 		count, err2 := decreaseRef(refCount)
 		if err2 != nil {
-			return
+			return false, err2
 		}
 		log.Info().Msgf("Pod %s has %s refs, decrease to %s", pod.Name, refCount, count)
 		pod.Annotations = util.MapPut(pod.Annotations, util.KtRefCount, count)
 		_, err = k.UpdatePod(pod)
-		return
+		return false, nil
+	}
+}
+
+func handlePodEvent(obj any, status string, f func(*coreV1.Pod)) {
+	switch obj.(type) {
+	case *coreV1.Pod:
+		if f != nil {
+			log.Debug().Msgf("Pod %s %s", obj.(*coreV1.Pod).Name, status)
+			f(obj.(*coreV1.Pod))
+		}
+	default:
+		// ignore
 	}
 }
 
@@ -205,11 +215,17 @@ func (k *Kubernetes) waitPodReady(name, namespace string, timeoutSec int, times 
 		return nil, err
 	}
 	if pod.Status.Phase != coreV1.PodRunning {
-		log.Info().Msgf("Waiting for pod %s ...", name)
+		if strings.HasPrefix(name, util.RectifierPodPrefix) {
+			log.Info().Msgf("Fetching cluster time ...")
+		} else {
+			log.Info().Msgf("Waiting for pod %s ...", name)
+		}
 		time.Sleep(interval * time.Second)
 		return k.waitPodReady(name, namespace, timeoutSec, times + 1)
 	}
-	log.Info().Msgf("Pod %s is ready", pod.Name)
+	if !strings.HasPrefix(name, util.RectifierPodPrefix) {
+		log.Info().Msgf("Pod %s is ready", pod.Name)
+	}
 	return pod, err
 }
 

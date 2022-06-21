@@ -3,11 +3,13 @@ package sshchannel
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/alibaba/kt-connect/pkg/kt/util"
 	"io"
 	"io/ioutil"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -17,13 +19,13 @@ import (
 
 type SocksLogger struct {}
 
-func (s SocksLogger) Println(v ...interface{}) {
-	log.Info().Msgf(fmt.Sprint(v...))
+func (s SocksLogger) Println(v ...any) {
+	_, _ = util.BackgroundLogger.Write([]byte(fmt.Sprint(v...) + util.Eol))
 }
 
 // StartSocks5Proxy start socks5 proxy
-func (c *Cli) StartSocks5Proxy(privateKey string, sshAddress, socks5Address string) (err error) {
-	conn, err := connection(privateKey, sshAddress)
+func (c *Cli) StartSocks5Proxy(privateKey, sshAddress, socks5Address string) (err error) {
+	conn, err := createSshConnection(privateKey, sshAddress)
 	if err != nil {
 		return err
 	}
@@ -39,8 +41,8 @@ func (c *Cli) StartSocks5Proxy(privateKey string, sshAddress, socks5Address stri
 }
 
 // RunScript run the script on remote host.
-func (c *Cli) RunScript(privateKey string, sshAddress, script string) (result string, err error) {
-	conn, err := connection(privateKey, sshAddress)
+func (c *Cli) RunScript(privateKey, sshAddress, script string) (result string, err error) {
+	conn, err := createSshConnection(privateKey, sshAddress)
 	if err != nil {
 		log.Error().Err(err).Msgf("Failed to create ssh tunnel")
 		return "", err
@@ -66,10 +68,11 @@ func (c *Cli) RunScript(privateKey string, sshAddress, script string) (result st
 }
 
 // ForwardRemoteToLocal forward remote request to local
-func (c *Cli) ForwardRemoteToLocal(privateKey string, sshAddress, remoteEndpoint, localEndpoint string) (err error) {
-	conn, err := connection(privateKey, sshAddress)
+func (c *Cli) ForwardRemoteToLocal(privateKey, sshAddress, remoteEndpoint, localEndpoint string) error {
+	// Handle incoming connections on reverse forwarded tunnel
+	conn, err := createSshConnection(privateKey, sshAddress)
 	if err != nil {
-		log.Error().Err(err).Msgf("Failed to create ssh tunnel")
+		log.Debug().Err(err).Msgf("Failed to create ssh tunnel")
 		return err
 	}
 
@@ -77,21 +80,33 @@ func (c *Cli) ForwardRemoteToLocal(privateKey string, sshAddress, remoteEndpoint
 	listener, err := conn.Listen("tcp", remoteEndpoint)
 	if err != nil {
 		log.Error().Err(err).Msgf("Failed to listen remote endpoint")
+		_ = conn.Close()
+		disconnectRemotePort(privateKey, sshAddress, remoteEndpoint, c)
 		return err
 	}
 
-	log.Info().Msgf("Forward %s to local endpoint %s", remoteEndpoint, localEndpoint)
-
-	// Handle incoming connections on reverse forwarded tunnel
-	go func() {
-		for {
-			handleRequest(listener, localEndpoint)
+	log.Info().Msgf("Reverse tunnel %s -> %s established", remoteEndpoint, localEndpoint)
+	for {
+		if err = handleRequest(listener, localEndpoint); errors.Is(err, io.EOF) {
+			_ = listener.Close()
+			_ = conn.Close()
+			return err
 		}
-	}()
-	return
+	}
 }
 
-func handleRequest(listener net.Listener, localEndpoint string) {
+func disconnectRemotePort(privateKey, sshAddress, remoteEndpoint string, c *Cli) {
+	remotePort := strings.Split(remoteEndpoint, ":")[1]
+	out, err := c.RunScript(privateKey, sshAddress, fmt.Sprintf("/disconnect.sh %s", remotePort))
+	if out != "" {
+		_, _ = util.BackgroundLogger.Write([]byte(out + util.Eol))
+	}
+	if err != nil {
+		log.Warn().Err(err).Msgf("Failed to disconnect remote port %s", remotePort)
+	}
+}
+
+func handleRequest(listener net.Listener, localEndpoint string) error {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error().Msgf("Failed to handle request: %v", r)
@@ -102,8 +117,10 @@ func handleRequest(listener net.Listener, localEndpoint string) {
 	client, err := listener.Accept()
 	if err != nil {
 		log.Error().Err(err).Msgf("Failed to accept remote request")
-		time.Sleep(2 * time.Second)
-		return
+		if !errors.Is(err, io.EOF) {
+			time.Sleep(2 * time.Second)
+		}
+		return err
 	}
 
 	// Open a (local) connection to localEndpoint whose content will be forwarded to remoteEndpoint
@@ -111,14 +128,15 @@ func handleRequest(listener net.Listener, localEndpoint string) {
 	if err != nil {
 		_ = client.Close()
 		log.Error().Err(err).Msgf("Local service error")
-		return
+		return err
 	}
 
 	// Handle request in individual coroutine, current coroutine continue to accept more requests
 	go handleClient(client, local)
+	return nil
 }
 
-func connection(privateKey string, address string) (*ssh.Client, error) {
+func createSshConnection(privateKey, address string) (*ssh.Client, error) {
 	key, err := ioutil.ReadFile(privateKey)
 	if err != nil {
 		return nil, err
@@ -136,11 +154,7 @@ func connection(privateKey string, address string) (*ssh.Client, error) {
 		},
 	}
 
-	conn, err := ssh.Dial("tcp", address, config)
-	if err != nil {
-		log.Error().Err(err).Msgf("Fail create ssh connection")
-	}
-	return conn, err
+	return ssh.Dial("tcp", address, config)
 }
 
 func handleClient(client net.Conn, remote net.Conn) {
